@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fuel Delivery App</title>
+
+<!-- Leaflet Map Library (free, Google Maps jaisa) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    margin: 0;
+    background: #f4f6f8;
+    color: #1a1a1a;
+  }
+  header {
+    background: linear-gradient(135deg, #ff6a00, #ee0979);
+    color: white;
+    padding: 20px 30px;
+    text-align: center;
+  }
+  header h1 { margin: 0; font-size: 26px; }
+  header p { margin: 5px 0 0; opacity: 0.9; font-size: 14px; }
+
+  .container {
+    max-width: 1000px;
+    margin: 25px auto;
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 20px;
+    padding: 0 20px;
+  }
+  @media (max-width: 800px) {
+    .container { grid-template-columns: 1fr; }
+  }
+
+  .card {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+  }
+
+  #map { height: 400px; border-radius: 10px; }
+
+  .hint {
+    font-size: 13px;
+    color: #666;
+    margin: 10px 0;
+  }
+
+  label { font-weight: 600; font-size: 14px; display: block; margin-top: 12px; }
+  input[type="number"] {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    margin-top: 5px;
+    font-size: 14px;
+  }
+
+  .btn {
+    width: 100%;
+    margin-top: 18px;
+    padding: 13px;
+    background: #ee0979;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .btn:hover { background: #d10768; }
+  .btn:disabled { background: #ccc; cursor: not-allowed; }
+
+  #result { display: none; }
+  .result-title {
+    font-size: 15px;
+    color: #888;
+    margin-bottom: 10px;
+  }
+  .eta-badge {
+    background: #fff3e0;
+    color: #e65100;
+    display: inline-block;
+    padding: 10px 18px;
+    border-radius: 30px;
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 15px;
+  }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 14px;
+  }
+  .row span:first-child { color: #777; }
+  .row span:last-child { font-weight: 600; }
+  .total-price {
+    margin-top: 12px;
+    font-size: 20px;
+    font-weight: 700;
+    color: #ee0979;
+    text-align: right;
+  }
+  .loading { text-align: center; color: #888; padding: 20px; display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⛽ Highway Fuel Delivery</h1>
+  <p>Apni location select karo, hum 10 minute me fuel pahucha denge</p>
+</header>
+
+<div class="container">
+
+  <!-- LEFT: Map + Fuel Quantity -->
+  <div class="card">
+    <div id="map"></div>
+    <p class="hint">📍 Map pe kahi bhi click karke apni location select karo</p>
+
+    <label>Fuel Quantity (litres)</label>
+    <input type="number" id="fuel" value="10" min="1" max="30" step="0.5">
+
+    <button class="btn" id="requestBtn" onclick="requestFuel()">Request Fuel Delivery</button>
+  </div>
+
+  <!-- RIGHT: Result -->
+  <div class="card">
+    <div class="result-title" id="placeholderText">
+      Location select karke "Request Fuel Delivery" dabao, yahan result dikhega.
+    </div>
+
+    <div class="loading" id="loading">⏳ Nearest agent dhundh rahe hain...</div>
+
+    <div id="result">
+      <div class="eta-badge" id="eta-badge">-- min</div>
+
+      <div class="row"><span>Agent Assigned</span><span id="r-agent"></span></div>
+      <div class="row"><span>Distance</span><span id="r-distance"></span></div>
+      <div class="row"><span>Traffic</span><span id="r-traffic"></span></div>
+      <div class="row"><span>Weather</span><span id="r-weather"></span></div>
+      <div class="row"><span>Time of Day</span><span id="r-time"></span></div>
+      <div class="row"><span>Delivery Charge</span><span id="r-charge"></span></div>
+
+      <div class="total-price" id="r-total"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ---- Map setup ----
+  // Default center: Indore, India (tum apne shehar ke hisaab se badal sakte ho)
+  let selectedLat = 22.7196;
+  let selectedLng = 75.8577;
+
+  const map = L.map('map').setView([selectedLat, selectedLng], 12);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  let marker = L.marker([selectedLat, selectedLng]).addTo(map);
+
+  // Jab user map pe click kare, marker wahan move ho jaye
+  map.on('click', function(e) {
+    selectedLat = e.latlng.lat;
+    selectedLng = e.latlng.lng;
+    marker.setLatLng([selectedLat, selectedLng]);
+  });
+
+  // ---- Request Fuel button ----
+  async function requestFuel() {
+    const fuel = document.getElementById("fuel").value;
+    const btn = document.getElementById("requestBtn");
+
+    document.getElementById("placeholderText").style.display = "none";
+    document.getElementById("result").style.display = "none";
+    document.getElementById("loading").style.display = "block";
+    btn.disabled = true;
+
+    try {
+      const response = await fetch("/api/request-fuel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lat: selectedLat,
+          lng: selectedLng,
+          fuel_quantity: fuel
+        })
+      });
+
+      const data = await response.json();
+
+      // Result fill karo
+      document.getElementById("eta-badge").innerText = data.eta_minutes + " min";
+      document.getElementById("r-agent").innerText = data.agent_name;
+      document.getElementById("r-distance").innerText = data.distance_km + " km";
+      document.getElementById("r-traffic").innerText = data.traffic_level;
+      document.getElementById("r-weather").innerText = data.weather;
+      document.getElementById("r-time").innerText = data.time_of_day;
+      document.getElementById("r-charge").innerText = "₹" + data.delivery_charge;
+      document.getElementById("r-total").innerText = "Total: ₹" + data.total_price;
+
+      document.getElementById("loading").style.display = "none";
+      document.getElementById("result").style.display = "block";
+
+    } catch (err) {
+      document.getElementById("loading").style.display = "none";
+      document.getElementById("placeholderText").style.display = "block";
+      document.getElementById("placeholderText").innerText = "⚠️ Kuch error aaya, dobara try karo.";
+    }
+
+    btn.disabled = false;
+  }
+</script>
+
+</body>
+</html>
